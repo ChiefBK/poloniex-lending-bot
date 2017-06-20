@@ -7,12 +7,13 @@ var SECRET = process.env.POLONIEX_API_SECRET;
 
 var DEFAULT_RATE = 0.0015;
 var DEFAULT_DURATION = "2"; // A string with the number of days of loan
-var DEFAULT_AUTO_RENEW = "1"; // "1" if auto-renew; "0" if not to auto-renew
+var DEFAULT_AUTO_RENEW = "0"; // "1" if auto-renew; "0" if not to auto-renew
 var DEFAULT_STARTING_ORDER_BOOK_PERCENTAGE = 0.6; // The starting depth in the order book
 var DEFAULT_OPEN_ORDERS_THRESHOLD_PERCENTAGE = 0.2; // If open orders contain more than this percentage of funds of the total than start canceling orders
 var DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE = 0.2;
 var DEFAULT_MINIMUM_OFFER_AMOUNT = 0.01;
 var DEFAULT_MAXIMUM_ORDER_BOOK_INDEX = 0.9;
+var DEFAULT_MINIMUM_ORDER_BOOK_INDEX = 0.35;
 
 var poloniex = new Poloniex(API_KEY, SECRET, {
     socketTimeout: 130000
@@ -23,6 +24,7 @@ var returnCompleteBalances = Promise.promisify(Poloniex.prototype.returnComplete
 var createLoanOffer = Promise.promisify(Poloniex.prototype.createLoanOffer, {context: poloniex});
 var returnOpenLoanOffers = Promise.promisify(Poloniex.prototype.returnOpenLoanOffers, {context: poloniex});
 var cancelLoanOffer = Promise.promisify(Poloniex.prototype.cancelLoanOffer, {context: poloniex});
+var returnActiveLoans = Promise.promisify(Poloniex.prototype.returnActiveLoans, {context: poloniex});
 
 var orderBookIndex = DEFAULT_STARTING_ORDER_BOOK_PERCENTAGE; // How deep in the order book to open loan orders
 
@@ -33,8 +35,9 @@ var poller = function () {
     var loanOrders = returnLoanOrders('BTC', null);
     var balances = returnCompleteBalances('all');
     var openLoanOffers = returnOpenLoanOffers();
+    var activeLoans = returnActiveLoans();
 
-    Promise.all([loanOrders, balances, openLoanOffers]).then(function (response) {
+    Promise.all([loanOrders, balances, openLoanOffers, activeLoans]).then(function (response) {
         console.log("Retrieved loan orders, balance, and open loan offers");
 
         var openLoanOffersOnOrderBook = response[0].offers;
@@ -46,9 +49,12 @@ var poller = function () {
         else
             myOpenOffers = [];
 
+        var myActiveLoans = response[3].provided;
+
         console.log('Available balance is ' + availableBalance);
         console.log('There are ' + openLoanOffersOnOrderBook.length + ' offers on the order book');
-        console.log('You have ' + myOpenOffers.length + ' open offers');
+        console.log('You have ' + myOpenOffers.length + ' open offers worth ' + countOrderBtc(myOpenOffers) + ' BTC');
+        console.log('You have ' + myActiveLoans.length + ' active loans worth ' + countOrderBtc(myActiveLoans) + ' BTC');
 
         cancelOldOrders(myOpenOffers, availableBalance).then(function () {
             console.log("Finished canceling old orders");
@@ -121,7 +127,7 @@ var poller = function () {
             }
 
             // If had to cancel orders reduce orderBookIndex by 5% * number of canceled offers
-            if (cancelOfferPromises.length > 0) {
+            if (cancelOfferPromises.length > 0 && orderBookIndex > DEFAULT_MINIMUM_ORDER_BOOK_INDEX) {
                 var reductionAmount = (1 - (cancelOfferPromises.length * 0.05));
                 console.log("Reducing orderBookIndex to " + reductionAmount * 100 + "% of its original amount");
                 orderBookIndex *= reductionAmount; // reduce order book index
