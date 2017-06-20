@@ -11,6 +11,8 @@ var DEFAULT_AUTO_RENEW = "1"; // "1" if auto-renew; "0" if not to auto-renew
 var DEFAULT_STARTING_ORDER_BOOK_PERCENTAGE = 0.6; // The starting depth in the order book
 var DEFAULT_OPEN_ORDERS_THRESHOLD_PERCENTAGE = 0.2; // If open orders contain more than this percentage of funds of the total than start canceling orders
 var DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE = 0.2;
+var DEFAULT_MINIMUM_OFFER_AMOUNT = 0.01;
+var DEFAULT_MAXIMUM_ORDER_BOOK_INDEX = 0.9;
 
 var poloniex = new Poloniex(API_KEY, SECRET, {
     socketTimeout: 130000
@@ -35,29 +37,29 @@ var poller = function () {
     Promise.all([loanOrders, balances, openLoanOffers]).then(function (response) {
         console.log("Retrieved loan orders, balance, and open loan offers");
 
-        var openOffers = response[0].offers;
+        var openLoanOffersOnOrderBook = response[0].offers;
         var availableBalance = response[1].BTC.available;
         var myOpenOffers;
 
-        if ('BTC' in response[2]) // Just in case you have no open offers
+        if ('BTC' in response[2]) // Just in case you have no open offers then you must check that the 'BTC' key is in the response
             myOpenOffers = response[2].BTC;
         else
             myOpenOffers = [];
 
         console.log('Available balance is ' + availableBalance);
-        console.log('There are ' + openOffers.length + ' offers on the order book');
+        console.log('There are ' + openLoanOffersOnOrderBook.length + ' offers on the order book');
         console.log('You have ' + myOpenOffers.length + ' open offers');
 
         cancelOldOrders(myOpenOffers, availableBalance).then(function () {
             console.log("Finished canceling old orders");
 
-            var totalBtcInOffers = countOrderBtc(openOffers);
+            var totalBtcInOffers = countOrderBtc(openLoanOffersOnOrderBook);
             console.log("There is a total of " + totalBtcInOffers + " BTC on the order book");
             var btcOrderBookIndex = totalBtcInOffers * orderBookIndex;
             console.log("The orderBookIndex is at " + orderBookIndex * 100 + "%");
             console.log("Setting the btcOrderBookIndex to " + btcOrderBookIndex);
 
-            var rate = determineRate(openOffers, btcOrderBookIndex);
+            var rate = determineRate(openLoanOffersOnOrderBook, btcOrderBookIndex);
             var amount = availableBalance * DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE;
 
             placeLoanOffer(amount, rate).then(function (response) {
@@ -98,7 +100,7 @@ var poller = function () {
 
     // Returns a Promise after placing offer
     function placeLoanOffer(amount, rate) {
-        if (amount <= 0)
+        if (amount < DEFAULT_MINIMUM_OFFER_AMOUNT)
             return Promise.reject("Amount was less then or equal to zero");
 
         console.log("creating loan offer of " + amount + " BTC for " + DEFAULT_DURATION + " days at a rate of " + rate + " with auto-renew " + DEFAULT_AUTO_RENEW);
@@ -124,7 +126,7 @@ var poller = function () {
                 console.log("Reducing orderBookIndex to " + reductionAmount * 100 + "% of its original amount");
                 orderBookIndex *= reductionAmount; // reduce order book index
             }
-            else if (cancelOfferPromises.length == 0 && round > 0) { // Else increase it by 10% but not on first round
+            else if (cancelOfferPromises.length == 0 && round > 0 && orderBookIndex < DEFAULT_MAXIMUM_ORDER_BOOK_INDEX) { // Else increase it by 10% but not on first round
                 console.log("Increasing oderBookIndex by 10%");
                 orderBookIndex *= 1.1;
             }
