@@ -8,10 +8,10 @@ var SECRET = process.env.POLONIEX_API_SECRET;
 var DEFAULT_RATE = 0.0015;
 var DEFAULT_DURATION = "2"; // A string with the number of days of loan
 var DEFAULT_AUTO_RENEW = "0"; // "1" if auto-renew; "0" if not to auto-renew
-var DEFAULT_STARTING_ORDER_BOOK_PERCENTAGE = 0.6; // The starting depth in the order book
+var DEFAULT_STARTING_ORDER_BOOK_PERCENTAGE = 0.75; // The starting depth in the order book
 var DEFAULT_OPEN_ORDERS_THRESHOLD_PERCENTAGE = 0.2; // If open orders contain more than this percentage of funds of the total than start canceling orders
 var DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE = 0.2;
-var DEFAULT_MAXIMUM_LOAN_OFFER_AMOUNT = 0.3; // The max amount of BTC for any loan
+var DEFAULT_MAXIMUM_LOAN_OFFER_AMOUNT = 0.2; // The max amount of BTC for any loan
 var DEFAULT_MINIMUM_OFFER_AMOUNT = 0.01;
 var DEFAULT_MAXIMUM_ORDER_BOOK_INDEX = 0.9;
 var DEFAULT_MINIMUM_ORDER_BOOK_INDEX = 0.35;
@@ -38,11 +38,13 @@ var poller = function () {
     var openLoanOffers = returnOpenLoanOffers();
     var activeLoans = returnActiveLoans();
 
+    //TODO - fix nested promise antipattern - http://www.datchley.name/promise-patterns-anti-patterns/
+    //TODO - spread out api calls to fix nonce error - may be fixed by ^^ https://github.com/premasagar/poloniex.js/issues/4
     Promise.all([loanOrders, balances, openLoanOffers, activeLoans]).then(function (response) {
         console.log("Retrieved loan orders, balance, and open loan offers");
 
         var openLoanOffersOnOrderBook = response[0].offers;
-        var availableBalance = response[1].BTC.available;
+        var availableBalance = parseFloat(response[1].BTC.available);
         var myOpenOffers;
 
         if ('BTC' in response[2]) // Just in case you have no open offers then you must check that the 'BTC' key is in the response
@@ -75,13 +77,12 @@ var poller = function () {
             placeLoanOffer(amount, rate).then(function (response) {
                 console.log("Order placed successfully");
                 console.log("Order ID : " + response.orderID);
-                console.log("Amount : " + amount);
-                console.log("Rate : " + rate);
             }).catch(function (e) {
                 console.log("There was an error placing the loan offer");
                 console.log(e);
             }).finally(function () {
                 round++;
+                console.log("----------------------------------------");
             });
 
         }).catch(function (e) {
