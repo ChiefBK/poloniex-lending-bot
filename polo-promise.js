@@ -2,8 +2,8 @@ var Promise = require("bluebird");
 var Poloniex = require('poloniex-api-node');
 var cron = require('node-cron');
 
-var API_KEY = "LOJIE6LN-EJBGZHC6-H7TOW5KZ-5WB9SG13";
-var SECRET = "cad96077dddbb2d539f45697d0164bbd37e587be0f302ee972bfc76ed14e026331d93da885a9699ec930b734c92ec3cc46fa58311744fffa14cefab9f7f3a3d2";
+var API_KEY = process.env.POLONIEX_API_KEY; // Get api key and secret from system environmental variables
+var SECRET = process.env.POLONIEX_API_SECRET;
 
 var DEFAULT_RATE = 0.0015;
 var DEFAULT_DURATION = "2"; // A string with the number of days of loan
@@ -174,4 +174,4 @@ var poller = function () {
 
 console.log("STARTING at " + new Date().toString());
 
-cron.schedule('5 * * * *', poller);
+cron.schedule('*/5 * * * *', poller); // Run poller at the five minute mark. e.g. at 8:05, 8:10, 8:15, etc
