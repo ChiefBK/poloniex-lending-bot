@@ -1,0 +1,27 @@
+{
+  "name": "poloniex-lending-bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "polo-promise.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node $npm_package_main"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChiefBK/poloniex-lending-bot.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ChiefBK/poloniex-lending-bot/issues"
+  },
+  "homepage": "https://github.com/ChiefBK/poloniex-lending-bot#readme",
+  "dependencies": {
+    "autobahn": "^17.5.2",
+    "bluebird": "^3.5.0",
+    "node-cron": "^1.2.0",
+    "poloniex-api-node": "^1.1.1",
+    "ws": "^3.0.0"
+  }
+}
