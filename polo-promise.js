@@ -11,6 +11,7 @@ var DEFAULT_AUTO_RENEW = "0"; // "1" if auto-renew; "0" if not to auto-renew
 var DEFAULT_STARTING_ORDER_BOOK_PERCENTAGE = 0.6; // The starting depth in the order book
 var DEFAULT_OPEN_ORDERS_THRESHOLD_PERCENTAGE = 0.2; // If open orders contain more than this percentage of funds of the total than start canceling orders
 var DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE = 0.2;
+var DEFAULT_MAXIMUM_LOAN_OFFER_AMOUNT = 0.3; // The max amount of BTC for any loan
 var DEFAULT_MINIMUM_OFFER_AMOUNT = 0.01;
 var DEFAULT_MAXIMUM_ORDER_BOOK_INDEX = 0.9;
 var DEFAULT_MINIMUM_ORDER_BOOK_INDEX = 0.35;
@@ -69,7 +70,7 @@ var poller = function () {
             console.log("Setting the btcOrderBookIndex to " + btcOrderBookIndex);
 
             var rate = determineRate(openLoanOffersOnOrderBook, btcOrderBookIndex);
-            var amount = availableBalance * DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE;
+            var amount = Math.min(availableBalance * DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE, DEFAULT_MAXIMUM_LOAN_OFFER_AMOUNT);
 
             placeLoanOffer(amount, rate).then(function (response) {
                 console.log("Order placed successfully");
