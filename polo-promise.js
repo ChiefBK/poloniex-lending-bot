@@ -50,11 +50,14 @@ var poller = function () {
             myOpenOffers = [];
 
         var myActiveLoans = response[3].provided;
+        var myOpenOffersBalance = countOrderBtc(myOpenOffers);
+        var myActiveLoansBalance = countOrderBtc(myActiveLoans);
 
         console.log('Available balance is ' + availableBalance);
         console.log('There are ' + openLoanOffersOnOrderBook.length + ' offers on the order book');
-        console.log('You have ' + myOpenOffers.length + ' open offers worth ' + countOrderBtc(myOpenOffers) + ' BTC');
-        console.log('You have ' + myActiveLoans.length + ' active loans worth ' + countOrderBtc(myActiveLoans) + ' BTC');
+        console.log('You have ' + myOpenOffers.length + ' open offers worth ' + myOpenOffersBalance + ' BTC');
+        console.log('You have ' + myActiveLoans.length + ' active loans worth ' + myActiveLoansBalance + ' BTC');
+        console.log('You have a grand total of ' + (availableBalance + myOpenOffersBalance + myActiveLoansBalance) + ' BTC');
 
         cancelOldOrders(myOpenOffers, availableBalance).then(function () {
             console.log("Finished canceling old orders");
