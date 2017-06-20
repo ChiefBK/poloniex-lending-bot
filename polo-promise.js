@@ -101,7 +101,7 @@ var poller = function () {
     // Returns a Promise after placing offer
     function placeLoanOffer(amount, rate) {
         if (amount < DEFAULT_MINIMUM_OFFER_AMOUNT)
-            return Promise.reject("Amount was less then or equal to zero");
+            return Promise.reject("Amount (" + amount + ") was less then the minimum offer amount of " + DEFAULT_MINIMUM_OFFER_AMOUNT);
 
         console.log("creating loan offer of " + amount + " BTC for " + DEFAULT_DURATION + " days at a rate of " + rate + " with auto-renew " + DEFAULT_AUTO_RENEW);
         return createLoanOffer('BTC', amount, DEFAULT_DURATION, DEFAULT_AUTO_RENEW, rate);
