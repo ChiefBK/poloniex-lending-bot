@@ -33,14 +33,17 @@ var round = 0; // number of polling cycles
 
 var poller = function () {
     console.log("STARTING POLLER AT " + new Date().toString() + " - Round " + round);
-    var loanOrders = returnLoanOrders('BTC', null);
-    var balances = returnCompleteBalances('all');
-    var openLoanOffers = returnOpenLoanOffers();
-    var activeLoans = returnActiveLoans();
 
     //TODO - fix nested promise antipattern - http://www.datchley.name/promise-patterns-anti-patterns/
-    //TODO - spread out api calls to fix nonce error - may be fixed by ^^ https://github.com/premasagar/poloniex.js/issues/4
-    Promise.all([loanOrders, balances, openLoanOffers, activeLoans]).then(function (response) {
+    returnLoanOrders('BTC', null).then(function (loanOrders) {
+        return Promise.all([loanOrders, returnCompleteBalances('all')]);
+    }).then(function (result) {
+        result.push(returnOpenLoanOffers());
+        return Promise.all(result);
+    }).then(function (result) {
+        result.push(returnActiveLoans());
+        return Promise.all(result);
+    }).then(function (response) {
         console.log("Retrieved loan orders, balance, and open loan offers");
 
         var openLoanOffersOnOrderBook = response[0].offers;
@@ -75,8 +78,7 @@ var poller = function () {
             var amount = Math.min(availableBalance * DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE, DEFAULT_MAXIMUM_LOAN_OFFER_AMOUNT);
 
             placeLoanOffer(amount, rate).then(function (response) {
-                console.log("Order placed successfully");
-                console.log("Order ID : " + response.orderID);
+                console.log("Order #" + response.orderID + " placed successfully");
             }).catch(function (e) {
                 console.log("There was an error placing the loan offer");
                 console.log(e);
@@ -88,7 +90,7 @@ var poller = function () {
         }).catch(function (e) {
             console.log("There was an error canceling old orders");
             console.log(e);
-        })
+        });
     }).catch(function (e) {
         console.log("Error getting balances and load orders");
         console.log(e);
@@ -132,12 +134,12 @@ var poller = function () {
             }
 
             // If had to cancel orders reduce orderBookIndex by 5% * number of canceled offers
-            if (cancelOfferPromises.length > 0 && orderBookIndex > DEFAULT_MINIMUM_ORDER_BOOK_INDEX) {
-                var reductionAmount = (1 - (cancelOfferPromises.length * 0.05));
+            var reductionAmount = (1 - (cancelOfferPromises.length * 0.05));
+            if (cancelOfferPromises.length > 0 && orderBookIndex * reductionAmount > DEFAULT_MINIMUM_ORDER_BOOK_INDEX) {
                 console.log("Reducing orderBookIndex to " + reductionAmount * 100 + "% of its original amount");
                 orderBookIndex *= reductionAmount; // reduce order book index
             }
-            else if (cancelOfferPromises.length == 0 && round > 0 && orderBookIndex < DEFAULT_MAXIMUM_ORDER_BOOK_INDEX) { // Else increase it by 10% but not on first round
+            else if (cancelOfferPromises.length == 0 && round > 0 && orderBookIndex * 1.1 < DEFAULT_MAXIMUM_ORDER_BOOK_INDEX) { // Else increase it by 10% but not on first round
                 console.log("Increasing oderBookIndex by 10%");
                 orderBookIndex *= 1.1;
             }
