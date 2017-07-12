@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 var Promise = require("bluebird");
 var Poloniex = require('poloniex-api-node');
 var cron = require('node-cron');
@@ -26,16 +28,46 @@ var createLoanOffer = Promise.promisify(Poloniex.prototype.createLoanOffer, {con
 var returnOpenLoanOffers = Promise.promisify(Poloniex.prototype.returnOpenLoanOffers, {context: poloniex});
 var cancelLoanOffer = Promise.promisify(Poloniex.prototype.cancelLoanOffer, {context: poloniex});
 var returnActiveLoans = Promise.promisify(Poloniex.prototype.returnActiveLoans, {context: poloniex});
+var returnAvailableAccountBalances = Promise.promisify(Poloniex.prototype.returnAvailableAccountBalances, {context: poloniex});
+var transferBalance = Promise.promisify(Poloniex.prototype.transferBalance, {context: poloniex});
 
 var orderBookIndex = DEFAULT_STARTING_ORDER_BOOK_PERCENTAGE; // How deep in the order book to open loan orders
 
 var round = 0; // number of polling cycles
 
+// TODO - add start poller immediately option
+var argv = require('yargs')
+    .options({
+        's': {
+            alias: 'start',
+            describe: 'Start poller right away',
+            type: 'boolean'
+        }
+    })
+    .argv;
+
 var poller = function () {
     console.log("STARTING POLLER AT " + new Date().toString() + " - Round " + round);
 
     //TODO - fix nested promise antipattern - http://www.datchley.name/promise-patterns-anti-patterns/
-    returnLoanOrders('BTC', null).then(function (loanOrders) {
+    returnAvailableAccountBalances(null).then(function (availableBalances) {
+        var promises = [];
+        if ('exchange' in availableBalances) {
+            promises.push(transferBalance('BTC', availableBalances.exchange.BTC, 'exchange', 'lending'));
+        }
+
+        promises.push(returnLoanOrders('BTC', null));
+
+        return Promise.all(promises);
+    }).then(function (response) {
+        var loanOrders;
+        if (response.length > 1) {
+            loanOrders = response[1];
+        }
+        else {
+            loanOrders = response[0];
+        }
+
         return Promise.all([loanOrders, returnCompleteBalances('all')]);
     }).then(function (result) {
         result.push(returnOpenLoanOffers());
@@ -59,38 +91,37 @@ var poller = function () {
         var myOpenOffersBalance = countOrderBtc(myOpenOffers);
         var myActiveLoansBalance = countOrderBtc(myActiveLoans);
 
-        console.log('Available balance is ' + availableBalance);
+        console.log('Available balance is ' + availableBalance + ' BTC');
         console.log('There are ' + openLoanOffersOnOrderBook.length + ' offers on the order book');
-        console.log('You have ' + myOpenOffers.length + ' open offers worth ' + myOpenOffersBalance + ' BTC');
-        console.log('You have ' + myActiveLoans.length + ' active loans worth ' + myActiveLoansBalance + ' BTC');
-        console.log('You have a grand total of ' + (availableBalance + myOpenOffersBalance + myActiveLoansBalance) + ' BTC');
+        console.log('You have ' + myOpenOffers.length + ' open offers worth ' + myOpenOffersBalance.toFixed(8) + ' BTC');
+        console.log('You have ' + myActiveLoans.length + ' active loans worth ' + myActiveLoansBalance.toFixed(8) + ' BTC');
+        console.log('You have a grand total of ' + (availableBalance + myOpenOffersBalance + myActiveLoansBalance).toFixed(8) + ' BTC');
 
-        cancelOldOrders(myOpenOffers, availableBalance).then(function () {
-            console.log("Finished canceling old orders");
+        return Promise.all([openLoanOffersOnOrderBook, availableBalance, cancelOldOrders(myOpenOffers, availableBalance)]);
+    }).then(function (response) {
+        var openLoanOffersOnOrderBook = response[0];
+        var availableBalance = response[1];
 
-            var totalBtcInOffers = countOrderBtc(openLoanOffersOnOrderBook);
-            console.log("There is a total of " + totalBtcInOffers + " BTC on the order book");
-            var btcOrderBookIndex = totalBtcInOffers * orderBookIndex;
-            console.log("The orderBookIndex is at " + orderBookIndex * 100 + "%");
-            console.log("Setting the btcOrderBookIndex to " + btcOrderBookIndex);
+        console.log("Finished canceling old orders");
 
-            var rate = determineRate(openLoanOffersOnOrderBook, btcOrderBookIndex);
-            var amount = Math.min(availableBalance * DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE, DEFAULT_MAXIMUM_LOAN_OFFER_AMOUNT);
+        var totalBtcInOffers = countOrderBtc(openLoanOffersOnOrderBook);
+        console.log("There is a total of " + totalBtcInOffers.toFixed(8) + " BTC on the order book");
+        var btcOrderBookIndex = totalBtcInOffers * orderBookIndex;
+        console.log("The orderBookIndex is at " + orderBookIndex * 100 + "%");
+        console.log("Setting the btcOrderBookIndex to " + btcOrderBookIndex.toFixed(8));
 
-            placeLoanOffer(amount, rate).then(function (response) {
-                console.log("Order #" + response.orderID + " placed successfully");
-            }).catch(function (e) {
-                console.log("There was an error placing the loan offer");
-                console.log(e);
-            }).finally(function () {
-                round++;
-                console.log("----------------------------------------");
-            });
+        var rate = determineRate(openLoanOffersOnOrderBook, btcOrderBookIndex);
+        var amount = Math.min(availableBalance * DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE, DEFAULT_MAXIMUM_LOAN_OFFER_AMOUNT);
 
-        }).catch(function (e) {
-            console.log("There was an error canceling old orders");
-            console.log(e);
-        });
+        return placeLoanOffer(amount, rate);
+    }).then(function (response) {
+        console.log("Order #" + response.orderID + " placed successfully");
+    }).catch(function (e) {
+        console.log("There was an error placing the loan offer");
+        console.log(e);
+    }).finally(function () {
+        round++;
+        console.log("----------------------------------------");
     }).catch(function (e) {
         console.log("Error getting balances and load orders");
         console.log(e);
@@ -102,7 +133,7 @@ var poller = function () {
         for (var i = 0; i < loanOffers.length; i++) { // Find loan order with more than
             sumOffers += Number(loanOffers[i].amount);
             if (sumOffers > btcOrderBookIndex) {
-                console.log("Loan offers are above " + btcOrderBookIndex + " BTC at position: " + i);
+                console.log("Loan offers are above " + btcOrderBookIndex.toFixed(8) + " BTC at position: " + i);
                 return loanOffers[i].rate;
             }
         }
@@ -188,5 +219,9 @@ var poller = function () {
 };
 
 console.log("STARTING at " + new Date().toString());
+
+if (argv.start === true) {
+    console.log("Poller starting immediately");
+}
 
 cron.schedule('*/5 * * * *', poller); // Run poller at the five minute mark. e.g. at 8:05, 8:10, 8:15, etc
