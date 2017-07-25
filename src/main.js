@@ -1,4 +1,4 @@
-import Poller from './poller.js'
+import Poller from './poller2.js'
 import cron from 'node-cron';
 import Promise from 'bluebird';
 import {getDbConnection} from './db.js';
@@ -12,7 +12,7 @@ const server = Promise.coroutine(function*() {
 
     const poller = new Poller(dbConnection);
 
-    cron.schedule('*/5 * * * *', poller.run); // Run poller at the five minute mark. e.g. at 8:05, 8:10, 8:15, etc
+    cron.schedule('*/5 * * * *', Promise.coroutine(poller.run), true); // Run poller at the five minute mark. e.g. at 8:05, 8:10, 8:15, etc
 });
 
 server();
