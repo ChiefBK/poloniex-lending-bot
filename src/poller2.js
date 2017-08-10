@@ -1,5 +1,9 @@
 import Promise from 'bluebird';
 import Poloniex from 'poloniex-api-node';
+import {Balance} from './db.js';
+import Mongoose from 'mongoose';
+
+Mongoose.Promise = Promise;
 
 const API_KEY = process.env.POLONIEX_API_KEY; // Get api key and secret from system environmental variables
 const SECRET = process.env.POLONIEX_API_SECRET;
@@ -32,13 +36,9 @@ let orderBookIndex = DEFAULT_STARTING_ORDER_BOOK_PERCENTAGE; // How deep in the 
 
 let round = 0; // number of polling cycles
 
-// TODO - add start poller immediately option
+export default function Poller() {};
 
-export default function Poller(dbConnection) {
-    this.db = dbConnection;
-};
-
-Poller.prototype.run = function*() {
+Poller.prototype.run = Promise.coroutine(function*() {
     console.log("STARTING POLLER AT " + new Date().toString() + " - Round " + round);
 
     const availableBalances = yield returnAvailableAccountBalances(null);
@@ -72,6 +72,14 @@ Poller.prototype.run = function*() {
     console.log('You have ' + myOpenOffers.length + ' open offers worth ' + myOpenOffersBalance.toFixed(8) + ' BTC');
     console.log('You have ' + myActiveLoans.length + ' active loans worth ' + myActiveLoansBalance.toFixed(8) + ' BTC');
     console.log('You have a grand total of ' + (myAvailableBalance + myOpenOffersBalance + myActiveLoansBalance).toFixed(8) + ' BTC');
+
+    const balance = new Balance({
+        offersAmount: parseFloat(myOpenOffersBalance.toFixed(8)),
+        loansAmount: parseFloat(myActiveLoansBalance.toFixed(8)),
+        availableAmount: parseFloat(myAvailableBalance.toFixed(8))
+    });
+
+    yield balance.save();
 
     yield cancelOldOrders(myOpenOffers, myAvailableBalance);
 
@@ -187,5 +195,5 @@ Poller.prototype.run = function*() {
 
         return totalBtc;
     }
-};
+});
 

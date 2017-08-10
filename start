@@ -36,6 +36,7 @@ CONTAINERS = [
 
 parser = argparse.ArgumentParser(description='Run/Build/Pull Docker containers for the Poloniex Loaning Bot')
 parser.add_argument('--build', action='store_true')
+parser.add_argument('--run', action='store_true')
 args = parser.parse_args()
 
 pp = pprint.PrettyPrinter(indent=4)
@@ -68,11 +69,20 @@ def main():
 
     gateway = network.attrs['IPAM']['Config'][0]['Gateway']
 
-    for container in CONTAINERS:
-        run_container(container, gateway)
-        print 'Container ' + container['name'] + ' is running'
+    if args.run:
+        for container in CONTAINERS:
+            run_container(container, gateway)
+            print 'Container ' + container['name'] + ' is running'
 
-    p = subprocess.Popen(['docker', 'logs', '-f', 'poloniex-loaning-bot'])
+        p = subprocess.Popen(['docker', 'logs', '-f', 'poloniex-loaning-bot'])
+        try:
+            p.wait()
+        except KeyboardInterrupt:
+            try:
+               p.terminate()
+            except OSError:
+               pass
+            p.wait()
 
 
 def run_container(container_obj, gateway):
