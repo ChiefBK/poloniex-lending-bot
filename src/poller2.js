@@ -2,6 +2,7 @@ import Promise from 'bluebird';
 import Poloniex from 'poloniex-api-node';
 import {Balance} from './db.js';
 import Mongoose from 'mongoose';
+import Big from 'big.js';
 
 Mongoose.Promise = Promise;
 
@@ -13,7 +14,7 @@ const DEFAULT_DURATION = "2"; // A string with the number of days of loan
 const DEFAULT_AUTO_RENEW = "0"; // "1" if auto-renew; "0" if not to auto-renew
 const DEFAULT_STARTING_ORDER_BOOK_PERCENTAGE = 0.75; // The starting depth in the order book
 const DEFAULT_OPEN_ORDERS_THRESHOLD_PERCENTAGE = 0.2; // If open orders contain more than this percentage of funds of the total than start canceling orders
-const DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE = 0.2;
+const DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE = 0.2; // The percentage of the available BTC to set as the amount for a offer
 const DEFAULT_MAXIMUM_LOAN_OFFER_AMOUNT = 0.2; // The max amount of BTC for any loan
 const DEFAULT_MINIMUM_OFFER_AMOUNT = 0.01;
 const DEFAULT_MAXIMUM_ORDER_BOOK_INDEX = 0.9;
@@ -32,7 +33,7 @@ const returnActiveLoans = Promise.promisify(Poloniex.prototype.returnActiveLoans
 const returnAvailableAccountBalances = Promise.promisify(Poloniex.prototype.returnAvailableAccountBalances, {context: poloniex});
 const transferBalance = Promise.promisify(Poloniex.prototype.transferBalance, {context: poloniex});
 
-let orderBookIndex = DEFAULT_STARTING_ORDER_BOOK_PERCENTAGE; // How deep in the order book to open loan orders
+let orderBookIndex = new Big(DEFAULT_STARTING_ORDER_BOOK_PERCENTAGE); // How deep in the order book to open loan orders
 
 let round = 0; // number of polling cycles
 
@@ -53,7 +54,7 @@ Poller.prototype.run = Promise.coroutine(function*() {
     const activeLoans = yield returnActiveLoans();
 
     const openOffers = loanOrders.offers;
-    const myAvailableBalance = parseFloat(completeBalances.BTC.available);
+    const myAvailableBalance = new Big(completeBalances.BTC.available);
     const myActiveLoans = activeLoans.provided;
     let myOpenOffers;
 
@@ -67,16 +68,16 @@ Poller.prototype.run = Promise.coroutine(function*() {
     const myOpenOffersBalance = countOrderBtc(myOpenOffers);
     const myActiveLoansBalance = countOrderBtc(myActiveLoans);
 
-    console.log('Available balance is ' + myAvailableBalance + ' BTC');
+    console.log('Available balance is ' + myAvailableBalance.toString() + ' BTC');
     console.log('There are ' + openOffers.length + ' offers on the order book');
-    console.log('You have ' + myOpenOffers.length + ' open offers worth ' + myOpenOffersBalance.toFixed(8) + ' BTC');
-    console.log('You have ' + myActiveLoans.length + ' active loans worth ' + myActiveLoansBalance.toFixed(8) + ' BTC');
-    console.log('You have a grand total of ' + (myAvailableBalance + myOpenOffersBalance + myActiveLoansBalance).toFixed(8) + ' BTC');
+    console.log('You have ' + myOpenOffers.length + ' open offers worth ' + myOpenOffersBalance.toString() + ' BTC');
+    console.log('You have ' + myActiveLoans.length + ' active loans worth ' + myActiveLoansBalance.toString() + ' BTC');
+    console.log('You have a grand total of ' + myAvailableBalance.plus(myOpenOffersBalance).plus(myActiveLoansBalance).toString() + ' BTC');
 
     const balance = new Balance({
-        offersAmount: parseFloat(myOpenOffersBalance.toFixed(8)),
-        loansAmount: parseFloat(myActiveLoansBalance.toFixed(8)),
-        availableAmount: parseFloat(myAvailableBalance.toFixed(8))
+        offersAmount: myOpenOffersBalance.toString(),
+        loansAmount: myActiveLoansBalance.toString(),
+        availableAmount: myAvailableBalance.toString()
     });
 
     yield balance.save();
@@ -86,13 +87,13 @@ Poller.prototype.run = Promise.coroutine(function*() {
     console.log("Finished canceling old orders");
 
     const totalBtcInOffers = countOrderBtc(openOffers);
-    console.log("There is a total of " + totalBtcInOffers.toFixed(8) + " BTC on the order book");
-    const btcOrderBookIndex = totalBtcInOffers * orderBookIndex;
-    console.log("The orderBookIndex is at " + orderBookIndex * 100 + "%");
-    console.log("Setting the btcOrderBookIndex to " + btcOrderBookIndex.toFixed(8));
+    console.log("There is a total of " + totalBtcInOffers.toString() + " BTC on the order book");
+    const orderBookBtcIndex = totalBtcInOffers.times(orderBookIndex);
+    console.log("The orderBookIndex is at " + orderBookIndex.times(100).toString() + "%");
+    console.log("Setting the btcOrderBookIndex to " + orderBookBtcIndex.toString());
 
-    const rate = determineRate(openOffers, btcOrderBookIndex);
-    const amount = Math.min(myAvailableBalance * DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE, DEFAULT_MAXIMUM_LOAN_OFFER_AMOUNT);
+    const rate = determineRate(openOffers, orderBookBtcIndex);
+    const amount = Math.min(myAvailableBalance.times(DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE), DEFAULT_MAXIMUM_LOAN_OFFER_AMOUNT);
 
     try{
         const response = yield placeLoanOffer(amount, rate);
@@ -106,13 +107,13 @@ Poller.prototype.run = Promise.coroutine(function*() {
     round++;
     console.log("----------------------------------------");
 
-    function determineRate(loanOffers, btcOrderBookIndex) {
-        let sumOffers = 0;
+    function determineRate(loanOffers, orderBookBtcIndex) {
+        let sumOffers = new Big(0);
 
         for (let i = 0; i < loanOffers.length; i++) { // Find loan order with more than
-            sumOffers += Number(loanOffers[i].amount);
-            if (sumOffers > btcOrderBookIndex) {
-                console.log("Loan offers are above " + btcOrderBookIndex.toFixed(8) + " BTC at position: " + i);
+            sumOffers = sumOffers.plus(loanOffers[i].amount);
+            if (sumOffers > orderBookBtcIndex) {
+                console.log("Loan offers are above " + orderBookBtcIndex.toString() + " BTC at position: " + i);
                 return loanOffers[i].rate;
             }
         }
@@ -133,25 +134,25 @@ Poller.prototype.run = Promise.coroutine(function*() {
     function cancelOldOrders(myOpenOffers, availableBalance) {
         return new Promise(function (resolve, reject) {
             let totalBtcInOpenOffers = countOrderBtc(myOpenOffers);
-            const totalBtc = availableBalance + totalBtcInOpenOffers;
+            const totalBtc = availableBalance.plus(totalBtcInOpenOffers);
 
             const cancelOfferPromises = [];
-            while (totalBtcInOpenOffers > totalBtc * DEFAULT_OPEN_ORDERS_THRESHOLD_PERCENTAGE) {
+            while (totalBtcInOpenOffers > totalBtc.times(DEFAULT_OPEN_ORDERS_THRESHOLD_PERCENTAGE)) {
                 console.log("BTC in open offers above threshold. Canceling oldest order...");
                 const oldestOffer = getOldestOffer(myOpenOffers);
                 cancelOfferPromises.push(cancelOffer(oldestOffer.id));
-                totalBtcInOpenOffers -= oldestOffer.amount;
+                totalBtcInOpenOffers = totalBtcInOpenOffers.minus(oldestOffer.amount);
             }
 
             // If had to cancel orders reduce orderBookIndex by 5% * number of canceled offers
-            const reductionAmount = (1 - (cancelOfferPromises.length * 0.05));
-            if (cancelOfferPromises.length > 0 && orderBookIndex * reductionAmount > DEFAULT_MINIMUM_ORDER_BOOK_INDEX) {
+            const reductionAmount = new Big(1 - (cancelOfferPromises.length * 0.05));
+            if (cancelOfferPromises.length > 0 && orderBookIndex.times(reductionAmount) > DEFAULT_MINIMUM_ORDER_BOOK_INDEX) {
                 console.log("Reducing orderBookIndex to " + reductionAmount * 100 + "% of its original amount");
-                orderBookIndex *= reductionAmount; // reduce order book index
+                orderBookIndex = orderBookIndex.times(reductionAmount); // reduce order book index
             }
-            else if (cancelOfferPromises.length == 0 && round > 0 && orderBookIndex * 1.1 < DEFAULT_MAXIMUM_ORDER_BOOK_INDEX) { // Else increase it by 10% but not on first round
+            else if (cancelOfferPromises.length == 0 && round > 0 && orderBookIndex.times(1.1) < DEFAULT_MAXIMUM_ORDER_BOOK_INDEX) { // Else increase it by 10% but not on first round
                 console.log("Increasing oderBookIndex by 10%");
-                orderBookIndex *= 1.1;
+                orderBookIndex = orderBookIndex.times(1.1);
             }
 
             Promise.all(cancelOfferPromises).then(function () {
@@ -187,10 +188,12 @@ Poller.prototype.run = Promise.coroutine(function*() {
     }
 
     function countOrderBtc(offers) {
-        let totalBtc = 0;
+        let totalBtc = new Big(0);
 
         for (let i = 0; i < offers.length; i++) {
-            totalBtc += parseFloat(offers[i].amount);
+            let amount = new Big(offers[i].amount);
+
+            totalBtc = totalBtc.plus(amount);
         }
 
         return totalBtc;

@@ -17,4 +17,6 @@ ENV POLONIEX_API_SECRET=$poloniex_api_secret
 ADD . /usr/local/src/poloniex-loaning-bot
 
 WORKDIR /usr/local/src/poloniex-loaning-bot
+
+CMD "npm" "install"
 CMD "npm" "start"
