@@ -1,6 +1,6 @@
 import Promise from 'bluebird';
 import Poloniex from 'poloniex-api-node';
-import {Balance} from './db.js';
+import {Balance, CompleteLoan, replaceActiveLoans, replaceOffers, PollerCollection} from './db.js';
 import Mongoose from 'mongoose';
 import Big from 'big.js';
 
@@ -32,6 +32,7 @@ const cancelLoanOffer = Promise.promisify(Poloniex.prototype.cancelLoanOffer, {c
 const returnActiveLoans = Promise.promisify(Poloniex.prototype.returnActiveLoans, {context: poloniex});
 const returnAvailableAccountBalances = Promise.promisify(Poloniex.prototype.returnAvailableAccountBalances, {context: poloniex});
 const transferBalance = Promise.promisify(Poloniex.prototype.transferBalance, {context: poloniex});
+const lendingHistory = Promise.promisify(Poloniex.prototype.returnLendingHistory, {context: poloniex});
 
 let orderBookIndex = new Big(DEFAULT_STARTING_ORDER_BOOK_PERCENTAGE); // How deep in the order book to open loan orders
 
@@ -40,11 +41,19 @@ let round = 0; // number of polling cycles
 export default function Poller() {};
 
 Poller.prototype.run = Promise.coroutine(function*() {
-    console.log("STARTING POLLER AT " + new Date().toString() + " - Round " + round);
+    const start = new Date();
+
+    console.log("STARTING POLLER AT " + start.toString() + " - Round " + round);
+
+    const lastRanQuery = yield PollerCollection.find({}).limit(1).sort({$natural:-1}).select('lastRan').exec();
+
+    yield PollerCollection.create({
+        lastRan: start
+    });
 
     const availableBalances = yield returnAvailableAccountBalances(null);
 
-    if ('exchange' in availableBalances) {
+    if ('exchange' in availableBalances && 'BTC' in availableBalances.exchange) {
         yield transferBalance('BTC', availableBalances.exchange.BTC, 'exchange', 'lending');
     }
 
@@ -52,6 +61,28 @@ Poller.prototype.run = Promise.coroutine(function*() {
     const completeBalances = yield returnCompleteBalances('all');
     const openLoanOffers = yield returnOpenLoanOffers();
     const activeLoans = yield returnActiveLoans();
+
+    if(lastRanQuery.length > 0){
+        const lastRanTimestamp = new Date(lastRanQuery[0].lastRan);
+        console.log(lastRanTimestamp)
+        const completedLoans = yield lendingHistory(lastRanTimestamp.getTime() / 1000, parseInt(start.getTime() / 1000), undefined);
+        console.log(completedLoans);
+
+        for (let i in completedLoans){
+            CompleteLoan.create({
+                loanId: completedLoans[i].id,
+                rate: completedLoans[i].rate,
+                amount: completedLoans[i].amount,
+                startDateTime: completedLoans[i].open,
+                endDateTime: completedLoans[i].close,
+                earned: completedLoans[i].earned
+            })
+        }
+
+    }
+
+    yield replaceActiveLoans(activeLoans);
+    yield replaceOffers(openLoanOffers);
 
     const openOffers = loanOrders.offers;
     const myAvailableBalance = new Big(completeBalances.BTC.available);
@@ -74,13 +105,11 @@ Poller.prototype.run = Promise.coroutine(function*() {
     console.log('You have ' + myActiveLoans.length + ' active loans worth ' + myActiveLoansBalance.toString() + ' BTC');
     console.log('You have a grand total of ' + myAvailableBalance.plus(myOpenOffersBalance).plus(myActiveLoansBalance).toString() + ' BTC');
 
-    const balance = new Balance({
+    yield Balance.create({
         offersAmount: myOpenOffersBalance.toString(),
         loansAmount: myActiveLoansBalance.toString(),
         availableAmount: myAvailableBalance.toString()
     });
-
-    yield balance.save();
 
     yield cancelOldOrders(myOpenOffers, myAvailableBalance);
 

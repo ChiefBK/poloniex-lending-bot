@@ -8,23 +8,33 @@ mongoose.Promise = Promise;
 
 const orderBookSchema = new Schema({
     weightedAvg: Number,
-    avgIntRate: Number,
-    minIntRate: Number,
-    maxIntRate: Number,
+    avgRate: Number,
+    minRate: Number,
+    maxRate: Number,
     numberOfOrders: Number
 });
 
 const offerSchema = new Schema({
-    intRate: Number,
-    amount: Number
+    rate: Number,
+    amount: Number,
+    startDateTime: Date
 });
 
-const loanSchema = new Schema({
-    intRate: Number,
+const activeLoanSchema = new Schema({
+    loanId: Number,
+    rate: Number,
     amount: Number,
     startDateTime: Date,
+    duration: Number
+});
+
+const completeLoanSchema = new Schema({
+    loanId: Number,
+    rate: Number,
+    amount: Number,
+    earned: Number,
+    startDateTime: Date,
     endDateTime: Date,
-    plannedDuration: Date
 });
 
 const balanceSchema = new Schema({
@@ -33,11 +43,42 @@ const balanceSchema = new Schema({
     availableAmount: Number
 });
 
+const pollerSchema = new Schema({
+    lastRan: Date
+});
+
 export const OrderBook = mongoose.model('OrderBook', orderBookSchema);
 export const Offer = mongoose.model('Offer', offerSchema);
-export const Loan = mongoose.model('Loan', loanSchema);
+export const ActiveLoan = mongoose.model('ActiveLoan', activeLoanSchema);
+export const CompleteLoan = mongoose.model('CompleteLoan', completeLoanSchema);
 export const Balance = mongoose.model('Balance', balanceSchema);
+export const PollerCollection = mongoose.model('Poller', pollerSchema);
 
+export const replaceActiveLoans = Promise.coroutine(function*(activeLoans){
+    yield ActiveLoan.find({}).remove().exec(); // Remove all active loans
+
+    for (let i in activeLoans){
+        yield ActiveLoan.create({
+            loanId: activeLoans[i].id,
+            rate: activeLoans[i].rate,
+            amount: activeLoans[i].amount,
+            startDateTime: activeLoans[i].date,
+            duration: activeLoans[i].duration
+        });
+    }
+});
+
+export const replaceOffers = Promise.coroutine(function*(offers){
+    yield Offer.find({}).remove().exec(); // Remove all active offers
+
+    for (let i in offers){
+        yield Offer.create({
+            rate: offers[i].rate,
+            amount: offers[i].amount,
+            startDateTime: offers[i].date
+        })
+    }
+});
 
 // export function getDbConnection(url) {
 //     return new Promise((resolve, reject) => {

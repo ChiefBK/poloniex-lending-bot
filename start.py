@@ -6,13 +6,26 @@ import os
 import argparse
 import pprint
 
+parser = argparse.ArgumentParser(description='Run/Build/Pull Docker containers for the Poloniex Loaning Bot')
+parser.add_argument('--build', action='store_true')
+parser.add_argument('--run', action='store_true')
+parser.add_argument('--key', action='store')
+parser.add_argument('--secret', action='store')
+args = parser.parse_args()
+
 NETWORK_NAME = "bridge"
 
-if os.environ['POLONIEX_API_KEY'] is None or os.environ['POLONIEX_API_SECRET'] is None:
-    raise EnvironmentError('POLONIEX_API_KEY or POLONIEX_API_SECRET env variables not set')
+#if os.environ['POLONIEX_API_KEY'] is None or os.environ['POLONIEX_API_SECRET'] is None:
+#    raise EnvironmentError('POLONIEX_API_KEY or POLONIEX_API_SECRET env variables not set')
 
 POLONIEX_API_KEY = os.environ['POLONIEX_API_KEY']
 POLONIEX_API_SECRET = os.environ['POLONIEX_API_SECRET']
+
+if args.key:
+    POLONIEX_API_KEY = args.key
+
+if args.secret:
+    POLONIEX_API_SECRET = args.secret
 
 CONTAINERS = [
     {
@@ -33,11 +46,6 @@ CONTAINERS = [
         }
     }
 ]
-
-parser = argparse.ArgumentParser(description='Run/Build/Pull Docker containers for the Poloniex Loaning Bot')
-parser.add_argument('--build', action='store_true')
-parser.add_argument('--run', action='store_true')
-args = parser.parse_args()
 
 pp = pprint.PrettyPrinter(indent=4)
 
