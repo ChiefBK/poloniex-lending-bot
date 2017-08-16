@@ -1,8 +1,8 @@
-import Promise from 'bluebird';
-import Poloniex from 'poloniex-api-node';
-import {Balance, CompleteLoan, replaceActiveLoans, replaceOffers, PollerCollection} from './db.js';
-import Mongoose from 'mongoose';
-import Big from 'big.js';
+import Promise from "bluebird";
+import Poloniex from "poloniex-api-node";
+import {Balance, CompleteLoan, replaceActiveLoans, replaceOffers, PollerCollection} from "./db.js";
+import Mongoose from "mongoose";
+import Big from "big.js";
 
 Mongoose.Promise = Promise;
 
@@ -12,13 +12,15 @@ const SECRET = process.env.POLONIEX_API_SECRET;
 const DEFAULT_RATE = 0.0015;
 const DEFAULT_DURATION = "2"; // A string with the number of days of loan
 const DEFAULT_AUTO_RENEW = "0"; // "1" if auto-renew; "0" if not to auto-renew
-const DEFAULT_STARTING_ORDER_BOOK_PERCENTAGE = 0.75; // The starting depth in the order book
+const DEFAULT_ORDER_BOOK_MEAN_INDEX = 0.75; // The starting depth in the order book
+const DEFAULT_OFFER_DIFFERENCE_INDEX = 0.08; // The starting difference between orders when they are placed
 const DEFAULT_OPEN_ORDERS_THRESHOLD_PERCENTAGE = 0.2; // If open orders contain more than this percentage of funds of the total than start canceling orders
 const DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE = 0.2; // The percentage of the available BTC to set as the amount for a offer
 const DEFAULT_MAXIMUM_LOAN_OFFER_AMOUNT = 0.2; // The max amount of BTC for any loan
 const DEFAULT_MINIMUM_OFFER_AMOUNT = 0.01;
 const DEFAULT_MAXIMUM_ORDER_BOOK_INDEX = 0.9;
 const DEFAULT_MINIMUM_ORDER_BOOK_INDEX = 0.35;
+const OFFERS_PER_POLLING_CYCLE = 5; // Number of offers to create every polling cycle
 
 const poloniex = new Poloniex(API_KEY, SECRET, {
     socketTimeout: 130000
@@ -34,18 +36,19 @@ const returnAvailableAccountBalances = Promise.promisify(Poloniex.prototype.retu
 const transferBalance = Promise.promisify(Poloniex.prototype.transferBalance, {context: poloniex});
 const lendingHistory = Promise.promisify(Poloniex.prototype.returnLendingHistory, {context: poloniex});
 
-let orderBookIndex = new Big(DEFAULT_STARTING_ORDER_BOOK_PERCENTAGE); // How deep in the order book to open loan orders
+let meanOrderBookIndex = new Big(DEFAULT_ORDER_BOOK_MEAN_INDEX); // How deep in the order book to open loan orders
 
 let round = 0; // number of polling cycles
 
-export default function Poller() {};
+export default function Poller() {
+};
 
 Poller.prototype.run = Promise.coroutine(function*() {
     const start = new Date();
 
     console.log("STARTING POLLER AT " + start.toString() + " - Round " + round);
 
-    const lastRanQuery = yield PollerCollection.find({}).limit(1).sort({$natural:-1}).select('lastRan').exec();
+    const lastRanQuery = yield PollerCollection.find({}).limit(1).sort({$natural: -1}).select('lastRan').exec();
 
     yield PollerCollection.create({
         lastRan: start
@@ -62,13 +65,13 @@ Poller.prototype.run = Promise.coroutine(function*() {
     const openLoanOffers = yield returnOpenLoanOffers();
     const activeLoans = yield returnActiveLoans();
 
-    if(lastRanQuery.length > 0){
+    if (lastRanQuery.length > 0) {
         const lastRanTimestamp = new Date(lastRanQuery[0].lastRan);
         console.log(lastRanTimestamp)
         const completedLoans = yield lendingHistory(lastRanTimestamp.getTime() / 1000, parseInt(start.getTime() / 1000), undefined);
         console.log(completedLoans);
 
-        for (let i in completedLoans){
+        for (let i in completedLoans) {
             CompleteLoan.create({
                 loanId: completedLoans[i].id,
                 rate: completedLoans[i].rate,
@@ -89,10 +92,10 @@ Poller.prototype.run = Promise.coroutine(function*() {
     const myActiveLoans = activeLoans.provided;
     let myOpenOffers;
 
-    if ('BTC' in openLoanOffers){
+    if ('BTC' in openLoanOffers) {
         myOpenOffers = openLoanOffers.BTC
     }
-    else{
+    else {
         myOpenOffers = [];
     }
 
@@ -111,24 +114,43 @@ Poller.prototype.run = Promise.coroutine(function*() {
         availableAmount: myAvailableBalance.toString()
     });
 
-    yield cancelOldOrders(myOpenOffers, myAvailableBalance);
+    try {
+        yield cancelOldOrders(myOpenOffers, myAvailableBalance);
+    }
+    catch (e) {
+        console.log("There was an error cancelling orders");
+        console.log(e);
+    }
 
     console.log("Finished canceling old orders");
 
     const totalBtcInOffers = countOrderBtc(openOffers);
     console.log("There is a total of " + totalBtcInOffers.toString() + " BTC on the order book");
-    const orderBookBtcIndex = totalBtcInOffers.times(orderBookIndex);
-    console.log("The orderBookIndex is at " + orderBookIndex.times(100).toString() + "%");
-    console.log("Setting the btcOrderBookIndex to " + orderBookBtcIndex.toString());
+    // console.log("The meanOrderBookIndex is at " + meanOrderBookIndex.times(100).toString() + "%");
+    // console.log("Setting the meanBtcOrderBookIndex to " + orderBookBtcIndex.toString());
 
-    const rate = determineRate(openOffers, orderBookBtcIndex);
-    const amount = Math.min(myAvailableBalance.times(DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE), DEFAULT_MAXIMUM_LOAN_OFFER_AMOUNT);
+    const totalAmountToOffer = Math.min(myAvailableBalance.times(DEFAULT_LOAN_OFFER_AMOUNT_PERCENTAGE_OF_AVAILABLE), DEFAULT_MAXIMUM_LOAN_OFFER_AMOUNT);
+    const numOfOffers = totalAmountToOffer / OFFERS_PER_POLLING_CYCLE > DEFAULT_MINIMUM_OFFER_AMOUNT ? OFFERS_PER_POLLING_CYCLE : parseInt(totalAmountToOffer / DEFAULT_MINIMUM_OFFER_AMOUNT);
+    const orderBookIndexes = getOrderBookIndexes(numOfOffers, DEFAULT_ORDER_BOOK_MEAN_INDEX, DEFAULT_OFFER_DIFFERENCE_INDEX);
+    const orderBookBtcIndexes = getOrderBookBtcIndexes(orderBookIndexes, totalBtcInOffers);
 
-    try{
-        const response = yield placeLoanOffer(amount, rate);
-        console.log("Order #" + response.orderID + " placed successfully");
+    console.log("Making " + numOfOffers + " offers this polling cycle");
+    console.log("The orderBookIndexes are " + orderBookIndexes);
+    console.log("The orderBookBtcIndexes are " + orderBookBtcIndexes);
+
+    const rates = getRates(openOffers, orderBookBtcIndexes, numOfOffers);
+    console.log("The rates are " + rates);
+
+    const individualOfferAmount = Big(totalAmountToOffer / numOfOffers);
+    console.log("the individual offer amount is " + individualOfferAmount.toString());
+
+    try {
+        for (let i in rates) {
+            const response = yield placeLoanOffer(individualOfferAmount.toString(), rates[i]);
+            console.log("Order #" + response.orderID + " placed successfully");
+        }
     }
-    catch (err){
+    catch (err) {
         console.log("There was an error placing the loan offer");
         console.log(err);
     }
@@ -136,19 +158,51 @@ Poller.prototype.run = Promise.coroutine(function*() {
     round++;
     console.log("----------------------------------------");
 
-    function determineRate(loanOffers, orderBookBtcIndex) {
+    // TODO - use random gaussian distribution to generate rates https://goo.gl/EqR2Dv
+    function getOrderBookIndexes(numOfOffers, meanOrderBookIndex, offerDifferenceIndex) {
+        const startingIndexDifference = numOfOffers % 2 == 0 ? Big((numOfOffers / 2 - 0.5) * offerDifferenceIndex) : Big(parseInt(numOfOffers / 2) * offerDifferenceIndex);
+        const startingIndex = Big(meanOrderBookIndex - startingIndexDifference);
+
+        console.log("the starting index diff is " + startingIndexDifference);
+        console.log("the starting index is " + startingIndex);
+
+        const indexes = [];
+
+        for (let i = 0; i < numOfOffers; i++) {
+            indexes.push(startingIndex.plus(Big(i).times(offerDifferenceIndex)));
+        }
+
+        return indexes;
+    }
+
+    function getOrderBookBtcIndexes(orderBookIndexes, totalBtcInOffers) {
+        const orderBookBtcIndexes = [];
+
+        for (let i = 0; i < orderBookIndexes.length; i++) {
+            orderBookBtcIndexes.push(orderBookIndexes[i].times(totalBtcInOffers))
+        }
+
+        return orderBookBtcIndexes;
+    }
+
+    function getRates(loanOffers, orderBookBtcIndexes) {
         let sumOffers = new Big(0);
+        let index = 0;
+
+        const rates = [];
 
         for (let i = 0; i < loanOffers.length; i++) { // Find loan order with more than
             sumOffers = sumOffers.plus(loanOffers[i].amount);
-            if (sumOffers > orderBookBtcIndex) {
-                console.log("Loan offers are above " + orderBookBtcIndex.toString() + " BTC at position: " + i);
-                return loanOffers[i].rate;
+            console.log("loan offer amount is " + loanOffers[i].amount);
+            console.log("Sum offers is " + sumOffers);
+            while (index < orderBookBtcIndexes.length && sumOffers.gt(orderBookBtcIndexes[index])) {
+                console.log("Loan offers are above " + orderBookBtcIndexes[index].toString() + " BTC at position: " + i);
+                rates.push(loanOffers[i].rate);
+                index++;
             }
         }
 
-        console.log('Using the default rate');
-        return DEFAULT_RATE;
+        return rates;
     }
 
     // Returns a Promise after placing offer
@@ -166,7 +220,7 @@ Poller.prototype.run = Promise.coroutine(function*() {
             const totalBtc = availableBalance.plus(totalBtcInOpenOffers);
 
             const cancelOfferPromises = [];
-            while (totalBtcInOpenOffers > totalBtc.times(DEFAULT_OPEN_ORDERS_THRESHOLD_PERCENTAGE)) {
+            while (totalBtcInOpenOffers.gt(totalBtc.times(DEFAULT_OPEN_ORDERS_THRESHOLD_PERCENTAGE))) {
                 console.log("BTC in open offers above threshold. Canceling oldest order...");
                 const oldestOffer = getOldestOffer(myOpenOffers);
                 cancelOfferPromises.push(cancelOffer(oldestOffer.id));
@@ -174,18 +228,21 @@ Poller.prototype.run = Promise.coroutine(function*() {
             }
 
             // If had to cancel orders reduce orderBookIndex by 5% * number of canceled offers
-            const reductionAmount = new Big(1 - (cancelOfferPromises.length * 0.05));
-            if (cancelOfferPromises.length > 0 && orderBookIndex.times(reductionAmount) > DEFAULT_MINIMUM_ORDER_BOOK_INDEX) {
+            const reductionAmount = Big(1).minus(Big(cancelOfferPromises.length).times(Big(0.05)));
+            if (cancelOfferPromises.length > 0 && meanOrderBookIndex.times(reductionAmount).gt(Big(DEFAULT_MINIMUM_ORDER_BOOK_INDEX))) {
                 console.log("Reducing orderBookIndex to " + reductionAmount * 100 + "% of its original amount");
-                orderBookIndex = orderBookIndex.times(reductionAmount); // reduce order book index
+                meanOrderBookIndex = meanOrderBookIndex.times(reductionAmount); // reduce order book index
             }
-            else if (cancelOfferPromises.length == 0 && round > 0 && orderBookIndex.times(1.1) < DEFAULT_MAXIMUM_ORDER_BOOK_INDEX) { // Else increase it by 10% but not on first round
+            else if (cancelOfferPromises.length == 0 && round > 0 && (meanOrderBookIndex.times(1.1)).lt(Big(DEFAULT_MAXIMUM_ORDER_BOOK_INDEX))) { // Else increase it by 10% but not on first round
                 console.log("Increasing oderBookIndex by 10%");
-                orderBookIndex = orderBookIndex.times(1.1);
+                meanOrderBookIndex = meanOrderBookIndex.times(1.1);
             }
 
             Promise.all(cancelOfferPromises).then(function () {
                 resolve();
+            }).catch(function (e) {
+                console.log("There was a error cancelling orders")
+                console.log(e)
             })
         });
     }
@@ -196,6 +253,9 @@ Poller.prototype.run = Promise.coroutine(function*() {
                 console.log("Successfully canceled order");
                 console.log("Order ID : " + orderId);
                 resolve();
+            }).catch(function (e) {
+                console.log("There was an error cancelling order " + orderId)
+                console.log(e)
             })
         })
     }

@@ -20,7 +20,7 @@ command="returnLendingHistory"
 req['command'] = command
 
 req['nonce'] = int(time.time()*1000)
-req['start'] = 1502668800g
+req['start'] = 1502668800
 req['end'] = 1502742555
 post_data = urllib.urlencode(req)
 
